@@ -3,7 +3,21 @@ import Header from './components/Header'
 import ContactForm from './components/ContactForm'
 import ContactList from './components/ContactList'
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || ''
+// Resolve backend base URL with sensible fallbacks if VITE_BACKEND_URL is not set
+function resolveApiBase() {
+  const envBase = import.meta.env.VITE_BACKEND_URL
+  if (envBase) return envBase.replace(/\/$/, '')
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin
+    // Modal-style preview hosts often encode the port in the subdomain
+    if (origin.includes('-3000.')) return origin.replace('-3000.', '-8000.')
+    // Fallback to swapping dev ports
+    if (origin.includes(':3000')) return origin.replace(':3000', ':8000')
+  }
+  return ''
+}
+
+const API_BASE = resolveApiBase()
 
 export default function App() {
   const [contacts, setContacts] = useState([])
@@ -12,15 +26,19 @@ export default function App() {
   const [showFavorites, setShowFavorites] = useState(false)
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
+  const [formKey, setFormKey] = useState(0)
 
   const fetchContacts = async (params = {}) => {
     try {
+      setLoading(true)
+      setError('')
       const url = new URL(`${API_BASE}/contacts`)
       if (params.q) url.searchParams.set('q', params.q)
-      if (params.favorite !== undefined) url.searchParams.set('favorite', params.favorite)
-      const res = await fetch(url)
+      if (params.favorite !== undefined) url.searchParams.set('favorite', String(params.favorite))
+      const res = await fetch(url.toString())
+      if (!res.ok) throw new Error('Failed to fetch')
       const data = await res.json()
-      setContacts(data)
+      setContacts(Array.isArray(data) ? data : [])
     } catch (e) {
       setError('Failed to load contacts')
     } finally {
@@ -30,6 +48,7 @@ export default function App() {
 
   useEffect(() => {
     fetchContacts({})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSearch = (q) => {
@@ -53,8 +72,10 @@ export default function App() {
       if (!res.ok) throw new Error('Create failed')
       const created = await res.json()
       setContacts((list) => [created, ...list])
+      return true
     } catch (e) {
       setError('Could not add contact')
+      return false
     }
   }
 
@@ -86,12 +107,13 @@ export default function App() {
     }
   }
 
-  const onSubmitForm = (data) => {
+  const onSubmitForm = async (data) => {
     if (editing) {
-      updateContact(editing.id, data)
+      await updateContact(editing.id, data)
       setEditing(null)
     } else {
-      addContact(data)
+      const ok = await addContact(data)
+      if (ok) setFormKey((k) => k + 1) // reset form after successful add
     }
   }
 
@@ -100,7 +122,9 @@ export default function App() {
   }
 
   const sortedContacts = useMemo(() => {
-    return [...contacts].sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name))
+    return [...contacts].sort(
+      (a, b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name)
+    )
   }, [contacts])
 
   return (
@@ -108,7 +132,7 @@ export default function App() {
       <div className="max-w-5xl mx-auto p-6 space-y-6">
         <Header onSearch={handleSearch} showFavorites={showFavorites} onToggleFavorites={handleToggleFavorites} />
 
-        <ContactForm onSubmit={onSubmitForm} editing={editing} onCancel={() => setEditing(null)} />
+        <ContactForm key={formKey} onSubmit={onSubmitForm} editing={editing} onCancel={() => setEditing(null)} />
 
         {error && (
           <div className="p-3 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>
